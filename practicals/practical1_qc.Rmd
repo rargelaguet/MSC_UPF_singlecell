@@ -39,9 +39,15 @@ pbmc.data[1:5,1:5]
 
 **(Q) Calculate the fraction of zeros in the count matrix (hint: you may have to use functions from the `Matrix` package to deal with sparse matrices)**.
 
+<details>
+  <summary>**Solution**</summary>
+  
 ```{r}
 Matrix::mean(pbmc.data==0)
 ```
+
+</details>
+
 
 # Create Seurat object
 
@@ -136,13 +142,14 @@ Add your code here
   <summary>**Solution**</summary>
   
 ```{r}
-nReads.per.cell <- apply(rna.mtx,2,sum)
+nReads.per.cell <- Matrix::colSums(rna.mtx)
 hist(nReads.per.cell, breaks = 100)
 abline(v=750, col="red", lwd=2)
 ```
 
 ```{r}
-nGenes.per.cell <- apply(rna.mtx>0,2,sum)
+# nGenes.per.cell <- apply(rna.mtx>0,2,sum)
+nGenes.per.cell <- Matrix::colSums(rna.mtx>0)
 hist(nGenes.per.cell, breaks=100)
 abline(v=400, col="red", lwd=2)
 ```
