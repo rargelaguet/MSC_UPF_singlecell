@@ -1,8 +1,16 @@
 ---
 title: "Batch correction for single-cell RNA sequencing"
-author: "Ricard Argelaguet"
-output: html_document
+author: 
+  name: "Ricard Argelaguet"
+  affiliation: "European Bioinformatics Institute, Cambridge, UK"
+  email: "ricard@ebi.ac.uk"
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_depth: 2
 ---
+
 
 # Introduction
 
@@ -11,27 +19,42 @@ This vignette illustrates how to perform batch effect correction of scRNA-seq da
 # Load libraries
 
 ```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
 library(Seurat)
 library(ggplot2)
 ```
 
 # Load the data
 
-The data set consists of ~5kb cells of human pancreatic islet cells profiled by three different technologies
+The data set consists of ~5kb cells of human pancreatic islet cells profiled by three different technologies:
 
 ```{r}
 seurat <- readRDS("/Users/ricard/data/not_used/pancreas_scrna/seurat_subset.rds")
+seurat
+```
+
+The cell metadata contains two important columns:  
+
+- **tech**: the scRNA-seq technology.  
+- **celltype**: the cell type assignment.  
+
+```{r}
 table(seurat$tech)
+```
+
+```{r}
+table(seurat$celltype)
 ```
 
 # Data analysis without batch correction
 
-**(Q) Follow the tutorial from the first vignette to obtain a PCA + UMAP of this data set. Colour each cell by their technology (`tech` column) and by their cell type assignment (`celltype` column). Do you see batch effects?**
+**(Q) Follow the tutorial from the first vignette to generate a UMAP plot of this data set. Colour each cell by their technology and by their cell type assignment. Do you see batch effects?**
+
 
 <details>
   <summary>**Solution**</summary>
   
-```{r}
+```{r message=FALSE}
 seurat <- NormalizeData(seurat)
 seurat <- FindVariableFeatures(seurat)
 seurat <- ScaleData(seurat)
@@ -45,7 +68,44 @@ DimPlot(seurat, group.by ="celltype", reduction = "umap")
 
 # Data analysis with batch correction
 
-## Prepare the data
+## Batch correction using ComBat
+
+First, we will test whether a simple linear method for batch correction does the job. We will use [ComBat](https://academic.oup.com/nargab/article/2/3/lqaa078/5909519)
+
+Extract the RNA expression matrix and run ComBat:
+```{r message=FALSE}
+com <- sva::ComBat(
+  dat = as.matrix(seurat@assays$RNA@scale.data), 
+  batch = seurat$tech
+)
+```
+
+Create a new Seurat object and replace the RNA expression matrix by the ComBat-corrected data
+```{r}
+seurat.combat <- seurat
+seurat.combat@assays$RNA@scale.data <- com
+```
+
+Run PCA + UMAP
+```{r message=FALSE}
+seurat.combat <- RunPCA(seurat.combat, npcs = 30, verbose = FALSE)
+seurat.combat <- RunUMAP(seurat.combat, reduction = "pca", dims = 1:30)
+```
+
+Plot UMAP
+```{r}
+DimPlot(seurat.combat, group.by = "tech", reduction = "umap")
+DimPlot(seurat.combat, group.by ="celltype", reduction = "umap")
+```
+
+
+## Batch correction using MNN (as implemented in Seurat)
+
+Next, we can integrate the batches, here we only do this for three of them. For this, we identify anchors using an approach based on CCA with a given number of dimensions followed by MNN identification and then integrate the data by the resulting correction vectors. Seurat additionally downweights inconsistent pairs that might originate e.g. from mappings of a unique cell population in one batch.  
+
+**(Q) What are the advantages of CCA with respect to PCA for batch correcion of single-cell data?**  
+
+### Prepare the data
 
 First, split the Seurat object into a list of Seurat objects, one for each technology
 ```{r, warning=FALSE, message=FALSE}
@@ -72,54 +132,28 @@ for (i in 1:length(seurat.list)) {
 }
 ```
 
-## Batch correction using ComBat
+### Find anchors
 
-Prepare data
-```{r}
-com <- sva::ComBat(
-  dat = as.matrix(seurat@assays$RNA@scale.data), 
-  batch = seurat@meta.data$tech
-)
-```
-
-Create a new Seurat object and replace the RNA expression matrix by the ComBat-corrected data
-```{r}
-seurat.combat <- seurat
-seurat.combat@assays$RNA@scale.data <- com
-```
-
-Run PCA + UMAP
-```{r}
-seurat.combat <- RunPCA(seurat.combat, npcs = 30, verbose = FALSE)
-seurat.combat <- RunUMAP(seurat.combat, reduction = "pca", dims = 1:30)
-```
-
-Plot UMAP
-```{r}
-DimPlot(seurat.combat, group.by = "tech", reduction = "umap")
-DimPlot(seurat.combat, group.by ="celltype", reduction = "umap")
-```
-
-
-## Batch correction using MNN (as implemented in Seurat)
-
-Next, we can integrate the batches, here we only do this for three of them. For this, we identify anchors using an appraoch based on CCA with a given number of dimensions followed by MNN identification and then integrate the data by the resutling correction vectors. Seurat additionaly downweighs inconcsistent pairs that might originate e.g. from mappings of a unique cell population in one batch. 
-
-The first part is to reduce the dimensionality of the data using PCA or CCA and then identify the "anchors" or the "mutual neighbours" between the different data sets (i.e. pairs of cells from each dataset that are contained within each other's neighbourhood)
+Then, do reduce the dimensionality of the data using CCA and then identify the "anchors" or the "mutual neighbours" between the different data sets (i.e. pairs of cells from each dataset that are contained within each other's neighbourhood)
 ```{r, warning=FALSE, message=FALSE}
 anchors <- FindIntegrationAnchors(object.list = seurat.list, dims = 1:30)
 anchors
 ```
 
-The second part is to perform the actual batch correction. This involves four main (internal) computations:
-- Step 1: construct a weights matrix that defines the similarity between each query cell and each anchor. 
-- Step 2: compute the anchor integration matrix as the difference between the two expression matrices for every pair of anchor cells
-- Step 3. compute the transformation matrix as the product of the integration matrix and the weights matrix.
-- Step 4: Subtract the transformation matrix from the original expression matrix.
+### Batch correction
 
-```{r}
+The second part is to perform the actual batch correction. This involves four main (internal) computations:  
+
+- Step 1: construct a weights matrix that defines the similarity between each query cell and each anchor.  
+- Step 2: compute the anchor integration matrix as the difference between the two expression matrices for every pair of anchor cells.  
+- Step 3. compute the transformation matrix as the product of the integration matrix and the weights matrix.  
+- Step 4: Subtract the transformation matrix from the original expression matrix.  
+
+```{r message=FALSE}
 seurat.integrated <- IntegrateData(anchorset = anchors, dims = 1:30)
 ```
+
+### Visualisation
 
 Once integrated we can again perform dimensionality reduction on the batch-corrected data and plot a UMAP
 
@@ -130,7 +164,7 @@ seurat.integrated <- ScaleData(seurat.integrated, verbose = FALSE)
 ```
 
 Run PCA + UMAP
-```{r}
+```{r message=FALSE}
 seurat.integrated <- RunPCA(seurat.integrated, npcs = 30, verbose = FALSE)
 seurat.integrated <- RunUMAP(seurat.integrated, reduction = "pca", dims = 1:30)
 ```
@@ -147,7 +181,7 @@ DimPlot(seurat.integrated, reduction = "umap", group.by = "celltype", label = TR
 
 **(Q) Compare the UMAPs obtained using Seurat's MNN and ComBat. Which method has been more effective at removing the batch effects?**
 
-**(Q) Why do we apply PCA (or CCA) before batch correction? Are the results robust to changes in the number of principal components?**
+**(Q) Why do we apply PCA (or CCA) before batch correction? Test if the results are robust to changes in the number of principal components?**
 
 # Marker gene identification
 
