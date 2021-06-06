@@ -156,27 +156,13 @@ abline(v=400, col="red", lwd=2)
 
 ```{r}
 mt.genes <- grep(pattern = "MT-", x = rownames(rna.mtx), value = TRUE)
-mt_percentage.per.cell <- colMeans(rna.mtx[mt.genes,])
+mt_percentage.per.cell <- 100*colSums(rna.mtx[mt.genes,])/colSums(rna.mtx)
 
 hist(mt_percentage.per.cell, breaks=100)
-abline(v=10, col="red", lwd=2)
+abline(v=5, col="red", lwd=2)
 ```
 
 </details>
-
-
-**(Q) Are the QC metrics correlated? why?**
-
-
-<details>
-  <summary>**Solution**</summary>
-  
-```{r}
-plot(x=mt_percentage.per.cell, y=nGenes.per.cell)
-plot(x=nReads.per.cell, y=nGenes.per.cell)
-```
-
-</details>  
   
 
 **(Q) Filter cells based on the desired QC threshold. How many cells did you remove?**
@@ -186,7 +172,7 @@ plot(x=nReads.per.cell, y=nGenes.per.cell)
   <summary>**Solution**</summary>
   
 ```{r}
-cells.to.keep <- mt_percentage.per.cell<10 & nGenes.per.cell>400 & nReads.per.cell>100
+cells.to.keep <- mt_percentage.per.cell<5 & nGenes.per.cell>400 & nReads.per.cell>100
 seurat <- seurat[,cells.to.keep]
 ```
 
